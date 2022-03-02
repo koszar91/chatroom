@@ -5,5 +5,7 @@ public enum MessageType {
     LIST,
     REGISTER_OK,
     REGISTER_NOT_OK,
+    USER_NEW,
+    USER_LEFT,
     TEXT
 }

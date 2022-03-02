@@ -1,6 +1,5 @@
 package server;
 
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import util.network.NetworkComponent;
 
-public record ClientRecord(String name, ObjectOutputStream out, ObjectInputStream in) { }
+public record ClientRecord(String name, NetworkComponent networkComponent) { }

@@ -2,118 +2,92 @@ package client;
 
 import util.message.Message;
 import util.message.MessageType;
+import util.network.NetworkComponent;
+import util.network.TCPNetworkComponent;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.net.Socket;
+import java.net.InetSocketAddress;
+import java.nio.channels.SocketChannel;
 import java.util.Scanner;
 
 public class Client {
 
-    private final Socket socket;
-    private final ObjectOutputStream out;
-    private final ObjectInputStream in;
+    private String username = "New user";
+    private final NetworkComponent networkComponent;
+    private final NetworkThread networkThread;
 
-    public Client(String address, int port) throws IOException {
-        this.socket = new Socket(address, port);
-        this.in = new ObjectInputStream(socket.getInputStream());
-        this.out = new ObjectOutputStream(socket.getOutputStream());
-        registerAtServer();
-    }
-
-    public static void main(String[] args) {
-
-        String address = "localhost";
-        int port = 12345;
-
-        Client client;
-
-        try {
-            client = new Client(address, port);
-        } catch (IOException e) {
-            System.err.printf("Server on address %s on port %d is not responding.\n", address, port);
-            return;
-        }
-
-        client.run();
-
+    public Client(String address, int port) throws IOException, ClassNotFoundException {
+        var socket = SocketChannel.open();
+        socket.connect(new InetSocketAddress(address, port));
+        var in = new ObjectInputStream(socket.socket().getInputStream());
+        var out = new ObjectOutputStream(socket.socket().getOutputStream());
+        this.networkComponent = new TCPNetworkComponent(socket, in, out);
+        this.networkThread = new NetworkThread(networkComponent);
+        register();
     }
 
     public void run() {
-        Thread userInputThread = new UserInputThread(Thread.currentThread(), out, new Scanner(System.in));
-        userInputThread.start();
+        Scanner console = new Scanner(System.in);
+        networkThread.start();
 
-        Thread serverListenerThread = new ServerListenerThread(Thread.currentThread(), in);
-        serverListenerThread.start();
-
-        try {
-            serverListenerThread.join();
-            userInputThread.join();
-        } catch (InterruptedException e) {
-            shutdown();
-            System.exit(0);
+        boolean shouldExit = false;
+        while (!shouldExit) {
+            try {
+                String input = console.nextLine();
+                if (input.contains("--exit")) {
+                    shouldExit = true;
+                } else if (input.contains("--list")) {
+                    networkComponent.sendMessage(new Message(MessageType.LIST, "", username));
+                } else if (!input.isEmpty()) {
+                    networkComponent.sendMessage(new Message(MessageType.TEXT, input, username));
+                }
+            } catch (IOException e) {
+                System.err.println("Unable to send the message.");
+                shouldExit = true;
+            }
         }
+
+        networkThread.cancel();
+        try {
+            networkThread.join();
+        } catch (InterruptedException ignored) {}
+        networkComponent.shutdown();
     }
 
-    private String promptUsername() {
-        Scanner consoleScanner = new Scanner(System.in);
-        System.out.println("Enter username: ");
-        return consoleScanner.nextLine();
-    }
-
-    private void registerAtServer() throws IOException {
+    private void register() throws IOException, ClassNotFoundException {
         boolean registered = false;
         do {
-            String potentialName = promptUsername();
-            sendMessage(new Message(MessageType.REGISTER, potentialName));
+            Scanner console = new Scanner(System.in);
+            System.out.print("Enter username: ");
+            String potentialName = console.nextLine();
+            networkComponent.sendMessage(new Message(MessageType.REGISTER, potentialName));
 
-            Message reply = receiveMessage();
+            Message reply = networkComponent.receiveMessage();
             if (reply.getType() == MessageType.REGISTER_OK) {
-                System.out.println("Successfully registered.");
+                System.out.println("Successfully joined the chat.");
+                this.username = potentialName;
                 registered = true;
+            } else if (reply.getType() == MessageType.REGISTER_NOT_OK) {
+                System.out.println("Cannot choose this name. Try another one.");
+            } else {
+                System.out.println("Server rejected. Try again.");
             }
 
         } while (!registered);
     }
 
-    private Message receiveMessage() throws IOException {
-        Message msg = null;
+    public static void main(String[] args) {
+        String address = "localhost";
+        int port = 12345;
         try {
-            msg = (Message) in.readObject();
+            Client client = new Client(address, port);
+            client.run();
+        } catch (IOException e) {
+            System.err.printf("Server on address %s on port %d is not responding.\n", address, port);
         } catch (ClassNotFoundException e) {
-            System.err.println("Received unknown message!");
-            e.printStackTrace();
-            System.exit(-1);
-        }
-        return msg;
-    }
-
-    private void sendMessage(Message message) throws IOException {
-        out.writeObject(message);
-    }
-
-    private void shutdown() {
-        try {
-            if (socket != null) {
-                socket.close();
-            }
-        } catch (IOException e) {
-            System.err.println("Unable to close " + socket);
-        }
-        try {
-            if (in != null) {
-                in.close();
-            }
-        } catch (IOException e) {
-            System.err.println("Unable to close " + in);
-        }
-        try {
-            if (out != null) {
-                out.close();
-            }
-        } catch (IOException e) {
-            System.err.println("Unable to close " + out);
+            System.err.println("Communication failed (send wrong message object).");
         }
     }
 }

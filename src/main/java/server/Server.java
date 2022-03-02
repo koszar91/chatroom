@@ -1,73 +1,39 @@
 package server;
 
 import java.io.*;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.util.Scanner;
 
 public class Server {
 
-    private final ServerSocket serverSocket;
+    private final Scanner console = new Scanner(System.in);
+    private final TCPServerThread tcpServerThread;
     private final SynchronizedClientRegister clientsRegister;
 
     public Server(int port) throws IOException {
         this.clientsRegister = new SynchronizedClientRegister();
-        this.serverSocket = new ServerSocket(port);
+        this.tcpServerThread = new TCPServerThread(port, clientsRegister);
     }
 
     public void run() {
-        runInputThread();
-        System.out.printf("Running server on port %d.\n", serverSocket.getLocalPort());
-        try {
-            while (!serverSocket.isClosed()) {
-                Socket socket = serverSocket.accept();
-                try {
-                    new ClientHandlingThread(socket, clientsRegister).start();
-                } catch (IOException e) {
-                    System.err.printf("Could not create thread for client %s.\n", socket.getPort());
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("IO Exception while waiting for a connection.");
-        } finally {
-            shutdown();
+        tcpServerThread.start();
+        System.out.println("Server running.");
+        while (!Thread.currentThread().isInterrupted()) {
+            if (console.nextLine().contains("--stop")) { break; }
         }
-    }
-
-    private void runInputThread() {
-        new Thread(() -> {
-            while (!Thread.currentThread().isInterrupted()) {
-                var scanner = new Scanner(System.in);
-                if (scanner.nextLine().contains("--stop")) {
-                    shutdown();
-                }
-            }
-        }).start();
-    }
-
-    private void shutdown() {
+        tcpServerThread.cancel();
         try {
-            serverSocket.close();
-        } catch (IOException e) {
-            System.err.println("IO Exception while closing the server socket.");
-        }
+            tcpServerThread.join();
+        } catch (InterruptedException ignored) {}
         System.out.println("Server shut down.");
     }
 
     public static void main(String[] args) {
-
         int port = 12345;
-
-        Server server;
-
         try {
-            server = new Server(port);
+            Server server = new Server(port);
+            server.run();
         } catch (IOException e) {
-            System.err.printf("Could not open server socket on port %d.\n", port);
-            return;
+            System.err.printf("Could not start server on port %d.\n", port);
         }
-
-        server.run();
-
     }
 }
