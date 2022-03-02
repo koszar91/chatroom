@@ -1,7 +1,7 @@
 package client;
 
-import common.message.Message;
-import common.message.MessageType;
+import util.message.Message;
+import util.message.MessageType;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -32,7 +32,7 @@ public class Client {
         try {
             client = new Client(address, port);
         } catch (IOException e) {
-            System.err.printf("Could not create socket on address %s on port %d\n", address, port);
+            System.err.printf("Server on address %s on port %d is not responding.\n", address, port);
             return;
         }
 
@@ -41,18 +41,18 @@ public class Client {
     }
 
     public void run() {
-        Thread userInputThread = new UserInputThread(out, new Scanner(System.in));
+        Thread userInputThread = new UserInputThread(Thread.currentThread(), out, new Scanner(System.in));
         userInputThread.start();
 
-        Thread serverListenerThread = new ServerListenerThread(in);
+        Thread serverListenerThread = new ServerListenerThread(Thread.currentThread(), in);
         serverListenerThread.start();
 
         try {
-            userInputThread.join();
             serverListenerThread.join();
+            userInputThread.join();
         } catch (InterruptedException e) {
-            System.out.println("Exiting...");
             shutdown();
+            System.exit(0);
         }
     }
 
@@ -69,7 +69,7 @@ public class Client {
             sendMessage(new Message(MessageType.REGISTER, potentialName));
 
             Message reply = receiveMessage();
-            if (reply.getType() == MessageType.REGISTER_ACK) {
+            if (reply.getType() == MessageType.REGISTER_OK) {
                 System.out.println("Successfully registered.");
                 registered = true;
             }

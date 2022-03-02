@@ -1,17 +1,21 @@
-package common.message;
+package util.message;
 
 import java.io.Serializable;
 
 public class Message implements Serializable {
 
     private final MessageType type;
-    private String author;
     private final String text;
+    private String author;
+
+    public Message(MessageType type, String text, String author) {
+        this.type = type;
+        this.author = author;
+        this.text = text;
+    }
 
     public Message(MessageType type, String text) {
-        this.type = type;
-        this.text = text;
-        this.author = "";
+        this(type, text, "New user");
     }
 
     public MessageType getType() {

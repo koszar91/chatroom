@@ -1,9 +1,9 @@
-package common.message;
+package util.message;
 
 public enum MessageType {
     REGISTER,
     LIST,
-    REGISTER_ACK,
-    REGISTER_NACK,
+    REGISTER_OK,
+    REGISTER_NOT_OK,
     TEXT
 }

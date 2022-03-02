@@ -1,21 +1,23 @@
 package server;
 
-import common.message.Message;
-import common.message.MessageType;
+import util.color.Color;
+import util.color.ColorPrinter;
+import util.message.Message;
+import util.message.MessageType;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
-import java.net.SocketException;
+import java.util.Collection;
 
 public class ClientHandlingThread extends Thread {
 
-    private String username;
     private final SynchronizedClientRegister clientsRegister;
     private final Socket socket;
     private final ObjectInputStream in;
     private final ObjectOutputStream out;
+    private String username;
 
     public ClientHandlingThread(Socket socket, SynchronizedClientRegister clientsRegister) throws IOException {
         this.socket = socket;
@@ -23,14 +25,14 @@ public class ClientHandlingThread extends Thread {
         this.username = "New user";
         this.out = new ObjectOutputStream(socket.getOutputStream());
         this.in = new ObjectInputStream(socket.getInputStream());
-        System.out.println("Client " + socket.getPort() + " connected");
+        ColorPrinter.printInColor(Color.GREEN, "Client " + socket.getPort() + " connected");
     }
 
     private void processMessage(Message message) throws IOException {
         switch (message.getType()) {
-            case REGISTER: handleRegistration(message.getText()); break;
-            case TEXT: broadcastMessage(message);
-            case LIST: sendList(message);
+            case REGISTER -> handleRegistration(message.getText());
+            case TEXT -> broadcastMessage(message);
+            case LIST -> sendList();
         }
     }
 
@@ -40,17 +42,49 @@ public class ClientHandlingThread extends Thread {
             while (socket.isConnected()) {
                 processMessage(this.receiveMessage());
             }
-        } catch (SocketException e) {
-            System.out.println(username + " disconnected.");
-            clientsRegister.removeClient(username);
         } catch (Exception e) {
-            System.err.println("Exception in client handler!\n" +
-                    "Client: " + socket + "\n" +
-                    "Exception type: " + e.getClass() + "\n" +
-                    "Exception cause: " + e.getMessage() + "\n"
-            );
+            ColorPrinter.printInColor(Color.RED, "Client " + socket.getPort() + " (" + username + ") disconnected.");
+            clientsRegister.removeClient(username);
+        } finally {
+            shutdown();
         }
-        shutdown();
+    }
+
+    private void handleRegistration(String name) throws IOException {
+        try {
+            clientsRegister.addClient(name, new ClientRecord(name, out, in));
+            username = name;
+            System.out.println("Client " + socket.getPort() + " registered as " + name + ".");
+            sendMessage(new Message(MessageType.REGISTER_OK, ""));
+        } catch (IllegalArgumentException e) {
+            sendMessage(new Message(MessageType.REGISTER_NOT_OK, ""));
+        }
+    }
+
+    private void broadcastMessage(Message message) {
+        message.setAuthor(username);
+        for (ClientRecord client : clientsRegister.toCollection()) {
+            if (client.name().equals(username)) {
+                continue;
+            }
+            try {
+                client.out().writeObject(message);
+            } catch (IOException e) {
+                System.err.println("IO exception broadcasting message " + message);
+            }
+        }
+    }
+
+    private void sendList() throws IOException {
+        Collection<ClientRecord> clients = clientsRegister.toCollection();
+
+        String usernames = clients
+                .stream()
+                .map(client -> " " + client.name() + " ")
+                .reduce("", String::concat);
+
+        String text = Color.YELLOW.ansiCode + "[" + usernames + "]" + Color.RESET.ansiCode;
+        sendMessage(new Message(MessageType.LIST, text, "server"));
     }
 
     private Message receiveMessage() throws IOException, ClassNotFoundException {
@@ -85,32 +119,4 @@ public class ClientHandlingThread extends Thread {
         }
     }
 
-    private void handleRegistration(String name) throws IOException {
-        try {
-            clientsRegister.addClient(name, new ClientData(name, super.getId(), out, in));
-            username = name;
-            System.out.println("Client " + socket.getPort() + " registered as " + name + ".");
-            sendMessage(new Message(MessageType.REGISTER_ACK, "0"));
-        } catch (IllegalArgumentException e) {
-            sendMessage(new Message(MessageType.REGISTER_NACK, "0"));
-        }
-    }
-
-    private void broadcastMessage(Message message) {
-        message.setAuthor(username);
-        for (ClientData clientData : clientsRegister.toCollection()) {
-            if (clientData.getName().equals(username)) {
-                continue;
-            }
-            try {
-                clientData.getOut().writeObject(message);
-            } catch (IOException e) {
-                System.err.println("IO exception broadcasting message " + message);
-            }
-        }
-    }
-
-    private void sendList(Message message) {
-
-    }
 }
