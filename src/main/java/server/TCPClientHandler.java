@@ -2,10 +2,9 @@ package server;
 
 import util.color.Color;
 import util.color.ColorPrinter;
-import util.message.Message;
-import util.message.MessageType;
-import util.network.NetworkComponent;
-import util.network.TCPNetworkComponent;
+import util.Message;
+import util.MessageType;
+import util.TCPConnection;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -17,7 +16,7 @@ import java.util.Collection;
 public class TCPClientHandler extends Thread {
 
     private final SynchronizedClientRegister clientsRegister;
-    private final NetworkComponent networkComponent;
+    private final TCPConnection tcpConnection;
     private final SocketAddress remoteAddress;
     private String username = "New user";
 
@@ -25,7 +24,7 @@ public class TCPClientHandler extends Thread {
         this.clientsRegister = clientsRegister;
         var out = new ObjectOutputStream(socket.socket().getOutputStream());
         var in = new ObjectInputStream(socket.socket().getInputStream());
-        this.networkComponent = new TCPNetworkComponent(
+        this.tcpConnection = new TCPConnection(
                 socket,
                 in,
                 out
@@ -38,7 +37,7 @@ public class TCPClientHandler extends Thread {
     public void run() {
         while (!interrupted()) {
             try {
-                Message message = networkComponent.receiveMessage();
+                Message message = tcpConnection.receiveMessage();
                 switch (message.getType()) {
                     case REGISTER   -> handleRegisterMessage(message);
                     case TEXT       -> handleTextMessage(message);
@@ -54,7 +53,7 @@ public class TCPClientHandler extends Thread {
             }
         }
         clientsRegister.removeClient(username);
-        networkComponent.shutdown();
+        tcpConnection.shutdown();
     }
 
     public void cancel() {
@@ -69,13 +68,16 @@ public class TCPClientHandler extends Thread {
             if (name.equals("server")) {
                 throw new IllegalArgumentException();
             }
-            clientsRegister.addClient(name, new ClientRecord(name, networkComponent));
+            clientsRegister.addClient(
+                    name,
+                    new ClientRecord(name, tcpConnection)
+            );
             username = name;
             System.out.println("Client " + remoteAddress + " registered as " + name + ".");
-            networkComponent.sendMessage(new Message(MessageType.REGISTER_OK, ""));
+            tcpConnection.sendMessage(new Message(MessageType.REGISTER_OK, ""));
             broadcast(new Message(MessageType.USER_NEW, name + " joined the chat.", "server"));
         } catch (IllegalArgumentException e) {
-            networkComponent.sendMessage(new Message(MessageType.REGISTER_NOT_OK, ""));
+            tcpConnection.sendMessage(new Message(MessageType.REGISTER_NOT_OK, ""));
         }
     }
 
@@ -93,7 +95,7 @@ public class TCPClientHandler extends Thread {
                 .map(client -> " " + client.name() + " ")
                 .reduce("", String::concat) + "]";
 
-        networkComponent.sendMessage(new Message(MessageType.LIST, usernames, "server"));
+        tcpConnection.sendMessage(new Message(MessageType.LIST, usernames, "server"));
     }
 
     private void broadcast(Message message) {
@@ -102,10 +104,8 @@ public class TCPClientHandler extends Thread {
                 continue;
             }
             try {
-                client.networkComponent().sendMessage(message);
-            } catch (IOException e) {
-                System.err.println("IO exception broadcasting message " + message);
-            }
+                client.tcpConnection().sendMessage(message);
+            } catch (IOException ignored) { }
         }
     }
 

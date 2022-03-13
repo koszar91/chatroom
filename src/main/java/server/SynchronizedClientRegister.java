@@ -1,5 +1,6 @@
 package server;
 
+import java.net.SocketAddress;
 import java.util.*;
 
 public class SynchronizedClientRegister {
@@ -20,6 +21,10 @@ public class SynchronizedClientRegister {
 
     public synchronized void removeClient(String name) {
         clients.remove(name);
+    }
+
+    public synchronized void setClientUDPAddress(String name, SocketAddress address) {
+        clients.get(name).setUdpAddress(address);
     }
 
     public synchronized Collection<ClientRecord> toCollection() {

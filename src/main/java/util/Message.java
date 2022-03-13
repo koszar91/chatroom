@@ -1,4 +1,4 @@
-package util.message;
+package util;
 
 import java.io.Serializable;
 

@@ -1,4 +1,4 @@
-package util.message;
+package util;
 
 public enum MessageType {
     REGISTER,

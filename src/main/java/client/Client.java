@@ -1,36 +1,61 @@
 package client;
 
-import util.message.Message;
-import util.message.MessageType;
-import util.network.NetworkComponent;
-import util.network.TCPNetworkComponent;
+import util.*;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.net.InetSocketAddress;
+import java.net.*;
+import java.nio.channels.DatagramChannel;
 import java.nio.channels.SocketChannel;
 import java.util.Scanner;
 
 public class Client {
 
+    private final DatagramChannel multicastSocket;
+    private final UDPListeningThread multicastListeningThread;
     private String username = "New user";
-    private final NetworkComponent networkComponent;
-    private final NetworkThread networkThread;
+    private final int serverPort;
+    private final TCPConnection tcpConnection;
+    private final TCPListeningThread tcpListeningThread;
+    private final String multicastAddress;
+    private final UDPListeningThread udpListeningThread;
+    private final DatagramChannel udpSocket;
 
-    public Client(String address, int port) throws IOException, ClassNotFoundException {
-        var socket = SocketChannel.open();
-        socket.connect(new InetSocketAddress(address, port));
-        var in = new ObjectInputStream(socket.socket().getInputStream());
-        var out = new ObjectOutputStream(socket.socket().getOutputStream());
-        this.networkComponent = new TCPNetworkComponent(socket, in, out);
-        this.networkThread = new NetworkThread(networkComponent);
+    public Client(String serverAddress, int port, String multicastAddress) throws IOException, ClassNotFoundException {
+        this.serverPort = port;
+
+        // setup tcp
+        var tcpSocket = SocketChannel.open();
+        tcpSocket.connect(new InetSocketAddress(serverAddress, port));
+        var in = new ObjectInputStream(tcpSocket.socket().getInputStream());
+        var out = new ObjectOutputStream(tcpSocket.socket().getOutputStream());
+        this.tcpConnection = new TCPConnection(tcpSocket, in, out);
+        this.tcpListeningThread = new TCPListeningThread(tcpConnection);
+
+        // setup udp
+        this.udpSocket = DatagramChannel.open().bind(null);
+        this.udpListeningThread = new UDPListeningThread(udpSocket);
+
+        // setup udp multicast
+        NetworkInterface ni = NetworkInterface.getByInetAddress(InetAddress.getLocalHost());
+        InetAddress group = InetAddress.getByName(multicastAddress);
+        this.multicastAddress = multicastAddress;
+        this.multicastSocket = DatagramChannel.open(StandardProtocolFamily.INET)
+                .setOption(StandardSocketOptions.SO_REUSEADDR, true)
+                .bind(new InetSocketAddress(serverPort))
+                .setOption(StandardSocketOptions.IP_MULTICAST_IF, ni);
+        this.multicastSocket.join(group, ni);
+        this.multicastListeningThread = new UDPListeningThread(multicastSocket);
+
         register();
     }
 
     public void run() {
         Scanner console = new Scanner(System.in);
-        networkThread.start();
+        tcpListeningThread.start();
+        udpListeningThread.start();
+        multicastListeningThread.start();
 
         boolean shouldExit = false;
         while (!shouldExit) {
@@ -39,9 +64,13 @@ public class Client {
                 if (input.contains("--exit")) {
                     shouldExit = true;
                 } else if (input.contains("--list")) {
-                    networkComponent.sendMessage(new Message(MessageType.LIST, "", username));
-                } else if (!input.isEmpty()) {
-                    networkComponent.sendMessage(new Message(MessageType.TEXT, input, username));
+                    tcpConnection.sendMessage(new Message(MessageType.LIST, "", username));
+                } else if (input.contains("-U")) {
+                    sendUDPMessage(new Message(MessageType.TEXT, input, username), false);
+                } else if (input.contains("-M")) {
+                    sendUDPMessage(new Message(MessageType.TEXT, input, username), true);
+                 }else if (!input.isEmpty()) {
+                    tcpConnection.sendMessage(new Message(MessageType.TEXT, input, username));
                 }
             } catch (IOException e) {
                 System.err.println("Unable to send the message.");
@@ -49,22 +78,41 @@ public class Client {
             }
         }
 
-        networkThread.cancel();
+        tcpListeningThread.cancel();
+        udpListeningThread.cancel();
+        multicastListeningThread.cancel();
         try {
-            networkThread.join();
+            tcpListeningThread.join();
+            udpListeningThread.join();
+            multicastListeningThread.join();
         } catch (InterruptedException ignored) {}
-        networkComponent.shutdown();
+        tcpConnection.shutdown();
+        shutdownUDP();
+    }
+
+    private void sendUDPMessage(Message message, boolean multicast) {
+        SocketAddress destinationAddress = multicast ?
+                new InetSocketAddress(multicastAddress, serverPort) :
+                new InetSocketAddress("localhost", serverPort);
+
+        UDPMessage udpMessage = new UDPMessage(destinationAddress, message);
+        try {
+            UDPUtils.sendMessage(udpSocket, udpMessage);
+        } catch (IOException e) {
+            System.err.println("IO Exception while sending UDP message to server: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     private void register() throws IOException, ClassNotFoundException {
+        // register using tcp
         boolean registered = false;
         do {
             Scanner console = new Scanner(System.in);
             System.out.print("Enter username: ");
             String potentialName = console.nextLine();
-            networkComponent.sendMessage(new Message(MessageType.REGISTER, potentialName));
-
-            Message reply = networkComponent.receiveMessage();
+            tcpConnection.sendMessage(new Message(MessageType.REGISTER, potentialName));
+            Message reply = tcpConnection.receiveMessage();
             if (reply.getType() == MessageType.REGISTER_OK) {
                 System.out.println("Successfully joined the chat.");
                 this.username = potentialName;
@@ -76,16 +124,29 @@ public class Client {
             }
 
         } while (!registered);
+
+        // register udp
+        sendUDPMessage(new Message(MessageType.REGISTER, ".", username), false);
+    }
+
+    private void shutdownUDP() {
+        try {
+            udpSocket.close();
+            multicastSocket.close();
+        } catch (IOException ignored) { }
     }
 
     public static void main(String[] args) {
         String address = "localhost";
         int port = 12345;
+        String multicastAddress = "239.1.2.3";
         try {
-            Client client = new Client(address, port);
+            Client client = new Client(address, port, multicastAddress);
             client.run();
+        } catch (BindException e) {
+            System.err.println(e.getMessage());
         } catch (IOException e) {
-            System.err.printf("Server on address %s on port %d is not responding.\n", address, port);
+            System.err.printf("Server not responding.\n");
         } catch (ClassNotFoundException e) {
             System.err.println("Communication failed (send wrong message object).");
         }
